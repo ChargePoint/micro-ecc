@@ -117,24 +117,6 @@ RNG function; you must provide your own.
 */
 typedef int (*uECC_RNG_Function)(uint8_t *dest, unsigned size);
 
-/* uECC_set_rng() function.
-Set the function that will be used to generate random bytes. The RNG function should
-return 1 if the random data was generated, or 0 if the random data could not be generated.
-
-On platforms where there is no predefined RNG function (eg embedded platforms), this must
-be called before uECC_make_key() or uECC_sign() are used.
-
-Inputs:
-    rng_function - The function that will be used to generate random bytes.
-*/
-void uECC_set_rng(uECC_RNG_Function rng_function);
-
-/* uECC_get_rng() function.
-
-Returns the function that will be used to generate random bytes.
-*/
-uECC_RNG_Function uECC_get_rng(void);
-
 /* uECC_curve_private_key_size() function.
 
 Returns the size of a private key for the curve in bytes.
@@ -163,7 +145,8 @@ Outputs:
 
 Returns 1 if the key pair was generated successfully, 0 if an error occurred.
 */
-int uECC_make_key(uint8_t *public_key, uint8_t *private_key, uECC_Curve curve);
+int uECC_make_key(uint8_t *public_key, uint8_t *private_key, uECC_Curve curve,
+                  uECC_RNG_Function rng_function);
 
 /* uECC_shared_secret() function.
 Compute a shared secret given your secret key and someone else's public key. If the public key
@@ -185,7 +168,8 @@ Returns 1 if the shared secret was generated successfully, 0 if an error occurre
 int uECC_shared_secret(const uint8_t *public_key,
                        const uint8_t *private_key,
                        uint8_t *secret,
-                       uECC_Curve curve);
+                       uECC_Curve curve,
+                       uECC_RNG_Function rng_function);
 
 #if uECC_SUPPORT_COMPRESSED_POINT
 /* uECC_compress() function.
@@ -261,7 +245,8 @@ int uECC_sign(const uint8_t *private_key,
               const uint8_t *message_hash,
               unsigned hash_size,
               uint8_t *signature,
-              uECC_Curve curve);
+              uECC_Curve curve,
+              uECC_RNG_Function rng_function);
 
 /* uECC_HashContext structure.
 This is used to pass in an arbitrary hash function to uECC_sign_deterministic().
@@ -338,7 +323,8 @@ int uECC_sign_deterministic(const uint8_t *private_key,
                             unsigned hash_size,
                             const uECC_HashContext *hash_context,
                             uint8_t *signature,
-                            uECC_Curve curve);
+                            uECC_Curve curve,
+                            uECC_RNG_Function rng_function);
 
 /* uECC_verify() function.
 Verify an ECDSA signature.

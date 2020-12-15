@@ -186,20 +186,6 @@ static cmpresult_t uECC_vli_cmp_unsafe(const uECC_word_t *left,
     #include "asm_avr.inc"
 #endif
 
-#if default_RNG_defined
-static uECC_RNG_Function g_rng_function = &default_RNG;
-#else
-static uECC_RNG_Function g_rng_function = 0;
-#endif
-
-void uECC_set_rng(uECC_RNG_Function rng_function) {
-    g_rng_function = rng_function;
-}
-
-uECC_RNG_Function uECC_get_rng(void) {
-    return g_rng_function;
-}
-
 int uECC_curve_private_key_size(uECC_Curve curve) {
     return BITS_TO_BYTES(curve->num_n_bits);
 }
@@ -921,17 +907,18 @@ static uECC_word_t regularize_k(const uECC_word_t * const k,
    Both random and top have num_words words. */
 uECC_VLI_API int uECC_generate_random_int(uECC_word_t *random,
                                           const uECC_word_t *top,
-                                          wordcount_t num_words) {
+                                          wordcount_t num_words,
+                                          uECC_RNG_Function rng_function) {
     uECC_word_t mask = (uECC_word_t)-1;
     uECC_word_t tries;
     bitcount_t num_bits = uECC_vli_numBits(top, num_words);
 
-    if (!g_rng_function) {
+    if (!rng_function) {
         return 0;
     }
 
     for (tries = 0; tries < uECC_RNG_MAX_TRIES; ++tries) {
-        if (!g_rng_function((uint8_t *)random, num_words * uECC_WORD_SIZE)) {
+        if (!rng_function((uint8_t *)random, num_words * uECC_WORD_SIZE)) {
             return 0;
         }
         random[num_words - 1] &= mask >> ((bitcount_t)(num_words * uECC_WORD_SIZE * 8 - num_bits));
@@ -945,7 +932,8 @@ uECC_VLI_API int uECC_generate_random_int(uECC_word_t *random,
 
 static uECC_word_t EccPoint_compute_public_key(uECC_word_t *result,
                                                uECC_word_t *private_key,
-                                               uECC_Curve curve) {
+                                               uECC_Curve curve,
+                                               uECC_RNG_Function rng_function) {
     uECC_word_t tmp1[uECC_MAX_WORDS];
     uECC_word_t tmp2[uECC_MAX_WORDS];
     uECC_word_t *p2[2] = {tmp1, tmp2};
@@ -958,8 +946,8 @@ static uECC_word_t EccPoint_compute_public_key(uECC_word_t *result,
 
     /* If an RNG function was specified, try to get a random initial Z value to improve
        protection against side-channel attacks. */
-    if (g_rng_function) {
-        if (!uECC_generate_random_int(p2[carry], curve->p, curve->num_words)) {
+    if (rng_function) {
+        if (!uECC_generate_random_int(p2[carry], curve->p, curve->num_words, rng_function)) {
             return 0;
         }
         initial_Z = p2[carry];
@@ -1017,7 +1005,8 @@ uECC_VLI_API void uECC_vli_bytesToNative(uECC_word_t *native,
 
 int uECC_make_key(uint8_t *public_key,
                   uint8_t *private_key,
-                  uECC_Curve curve) {
+                  uECC_Curve curve,
+                  uECC_RNG_Function rng_function) {
 #if uECC_VLI_NATIVE_LITTLE_ENDIAN
     uECC_word_t *_private = (uECC_word_t *)private_key;
     uECC_word_t *_public = (uECC_word_t *)public_key;
@@ -1028,11 +1017,12 @@ int uECC_make_key(uint8_t *public_key,
     uECC_word_t tries;
 
     for (tries = 0; tries < uECC_RNG_MAX_TRIES; ++tries) {
-        if (!uECC_generate_random_int(_private, curve->n, BITS_TO_WORDS(curve->num_n_bits))) {
+        if (!uECC_generate_random_int(_private, curve->n, BITS_TO_WORDS(curve->num_n_bits),
+                                      rng_function)) {
             return 0;
         }
 
-        if (EccPoint_compute_public_key(_public, _private, curve)) {
+        if (EccPoint_compute_public_key(_public, _private, curve, rng_function)) {
 #if uECC_VLI_NATIVE_LITTLE_ENDIAN == 0
             uECC_vli_nativeToBytes(private_key, BITS_TO_BYTES(curve->num_n_bits), _private);
             uECC_vli_nativeToBytes(public_key, curve->num_bytes, _public);
@@ -1048,7 +1038,8 @@ int uECC_make_key(uint8_t *public_key,
 int uECC_shared_secret(const uint8_t *public_key,
                        const uint8_t *private_key,
                        uint8_t *secret,
-                       uECC_Curve curve) {
+                       uECC_Curve curve,
+                       uECC_RNG_Function rng_function) {
     uECC_word_t _public[uECC_MAX_WORDS * 2];
     uECC_word_t _private[uECC_MAX_WORDS];
 
@@ -1074,8 +1065,8 @@ int uECC_shared_secret(const uint8_t *public_key,
 
     /* If an RNG function was specified, try to get a random initial Z value to improve
        protection against side-channel attacks. */
-    if (g_rng_function) {
-        if (!uECC_generate_random_int(p2[carry], curve->p, num_words)) {
+    if (rng_function) {
+        if (!uECC_generate_random_int(p2[carry], curve->p, num_words, rng_function)) {
             return 0;
         }
         initial_Z = p2[carry];
@@ -1190,7 +1181,7 @@ int uECC_compute_public_key(const uint8_t *private_key, uint8_t *public_key, uEC
     }
 
     /* Compute public key. */
-    if (!EccPoint_compute_public_key(_public, _private, curve)) {
+    if (!EccPoint_compute_public_key(_public, _private, curve, 0)) {
         return 0;
     }
 
@@ -1248,7 +1239,8 @@ static int uECC_sign_with_k(const uint8_t *private_key,
                             unsigned hash_size,
                             uECC_word_t *k,
                             uint8_t *signature,
-                            uECC_Curve curve) {
+                            uECC_Curve curve,
+                            uECC_RNG_Function rng_function) {
 
     uECC_word_t tmp[uECC_MAX_WORDS];
     uECC_word_t s[uECC_MAX_WORDS];
@@ -1272,8 +1264,8 @@ static int uECC_sign_with_k(const uint8_t *private_key,
     carry = regularize_k(k, tmp, s, curve);
     /* If an RNG function was specified, try to get a random initial Z value to improve
        protection against side-channel attacks. */
-    if (g_rng_function) {
-        if (!uECC_generate_random_int(k2[carry], curve->p, num_words)) {
+    if (rng_function) {
+        if (!uECC_generate_random_int(k2[carry], curve->p, num_words, rng_function)) {
             return 0;
         }
         initial_Z = k2[carry];
@@ -1285,10 +1277,10 @@ static int uECC_sign_with_k(const uint8_t *private_key,
 
     /* If an RNG function was specified, get a random number
        to prevent side channel analysis of k. */
-    if (!g_rng_function) {
+    if (!rng_function) {
         uECC_vli_clear(tmp, num_n_words);
         tmp[0] = 1;
-    } else if (!uECC_generate_random_int(tmp, curve->n, num_n_words)) {
+    } else if (!uECC_generate_random_int(tmp, curve->n, num_n_words, rng_function)) {
         return 0;
     }
 
@@ -1330,16 +1322,17 @@ int uECC_sign(const uint8_t *private_key,
               const uint8_t *message_hash,
               unsigned hash_size,
               uint8_t *signature,
-              uECC_Curve curve) {
+              uECC_Curve curve,
+              uECC_RNG_Function rng_function) {
     uECC_word_t k[uECC_MAX_WORDS];
     uECC_word_t tries;
 
     for (tries = 0; tries < uECC_RNG_MAX_TRIES; ++tries) {
-        if (!uECC_generate_random_int(k, curve->n, BITS_TO_WORDS(curve->num_n_bits))) {
+        if (!uECC_generate_random_int(k, curve->n, BITS_TO_WORDS(curve->num_n_bits), rng_function)) {
             return 0;
         }
 
-        if (uECC_sign_with_k(private_key, message_hash, hash_size, k, signature, curve)) {
+        if (uECC_sign_with_k(private_key, message_hash, hash_size, k, signature, curve, rng_function)) {
             return 1;
         }
     }
@@ -1402,7 +1395,8 @@ int uECC_sign_deterministic(const uint8_t *private_key,
                             unsigned hash_size,
                             const uECC_HashContext *hash_context,
                             uint8_t *signature,
-                            uECC_Curve curve) {
+                            uECC_Curve curve,
+                            uECC_RNG_Function rng_function) {
     uint8_t *K = hash_context->tmp;
     uint8_t *V = K + hash_context->result_size;
     wordcount_t num_bytes = curve->num_bytes;
@@ -1455,7 +1449,7 @@ int uECC_sign_deterministic(const uint8_t *private_key,
                 mask >> ((bitcount_t)(num_n_words * uECC_WORD_SIZE * 8 - num_n_bits));
         }
 
-        if (uECC_sign_with_k(private_key, message_hash, hash_size, T, signature, curve)) {
+        if (uECC_sign_with_k(private_key, message_hash, hash_size, T, signature, curve, rng_function)) {
             return 1;
         }
 
